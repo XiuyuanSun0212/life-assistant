@@ -849,6 +849,15 @@ details.article h4 { margin: 14px 0 6px; font-size: 14.5px; color: var(--primary
   position: relative; height: 120px; border-radius: 12px; overflow: hidden; margin-bottom: 12px;
 }
 .city-banner svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.city-photo {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; object-position: center 65%; z-index: 1;
+}
+.city-banner::after {
+  content: ""; position: absolute; inset: 0; z-index: 2; pointer-events: none;
+  background: linear-gradient(180deg, rgba(0,0,0,0) 45%, rgba(0,0,0,0.42) 100%);
+}
+.city-name { z-index: 3; }
 .city-name {
   position: absolute; left: 14px; bottom: 10px; color: #fff; font-size: 20px; font-weight: 800;
   letter-spacing: 2px; text-shadow: 0 2px 8px rgba(0,0,0,0.45);

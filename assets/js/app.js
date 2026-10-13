@@ -1042,8 +1042,11 @@
         s: '<path d="M0 70 0 52 8 52 22 34 36 52 44 52 44 40 60 26 76 40 76 52 88 52 102 38 112 46 120 46 120 70Z"/><circle cx="96" cy="16" r="7" fill="rgba(255,255,255,0.75)" stroke="none"/>'
       }
     }[d.theme] || { g: "linear-gradient(180deg,#2c3e50,#4b6cb7)", s: '<path d="M0 70 0 50 15 50 15 30 30 44 45 20 60 40 75 24 90 46 105 34 120 50 120 70Z"/>' };
+    var photos = { hengdian: "assets/img/travel/hengdian.png", japan: "assets/img/travel/japan.png" };
+    var photo = photos[d.theme];
     return '<div class="city-banner" style="background:' + sky.g + '">' +
       '<svg viewBox="0 0 120 70" preserveAspectRatio="xMidYMax slice" aria-hidden="true"><path fill="rgba(0,0,0,0.35)" d="' + sky.s + '"/></svg>' +
+      (photo ? '<img class="city-photo" src="' + photo + '" alt="' + esc(d.name) + '" onerror="this.remove()">' : "") +
       '<span class="city-name">' + esc(d.name) + "</span></div>";
   }
 
