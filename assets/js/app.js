@@ -9,6 +9,7 @@
   var S = window.Store;
 
   var contentEl = document.getElementById("content");
+  var RENDER = {};
   var navEl = document.getElementById("nav");
   var titleEl = document.getElementById("pageTitle");
   var subEl = document.getElementById("pageSub");
@@ -152,6 +153,51 @@
     return '<div class="empty">' + esc(text) + "</div>";
   }
 
+  /* ------------------------------------------------------------ 图片压缩 */
+
+  function compressImage(file, maxSide, quality, cb) {
+    try {
+      var fr = new FileReader();
+      fr.onload = function () {
+        var img = new Image();
+        img.onload = function () {
+          var w = img.width, h = img.height;
+          var scale = Math.min(1, maxSide / Math.max(w, h));
+          var cv = document.createElement("canvas");
+          cv.width = Math.round(w * scale);
+          cv.height = Math.round(h * scale);
+          cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+          cb(cv.toDataURL("image/jpeg", quality));
+        };
+        img.onerror = function () { cb(""); };
+        img.src = String(fr.result);
+      };
+      fr.onerror = function () { cb(""); };
+      fr.readAsDataURL(file);
+    } catch (e) { cb(""); }
+  }
+
+  /* --------------------------------------------------------- 浮层：灯箱/地图 */
+
+  function openOverlay(inner, cls) {
+    closeOverlay();
+    var ov = document.createElement("div");
+    ov.className = "overlay show" + (cls ? " " + cls : "");
+    ov.id = "ov-layer";
+    ov.innerHTML = '<div class="ov-box">' +
+      '<button class="ov-close" data-ovclose>✕</button>' + inner + "</div>";
+    document.body.appendChild(ov);
+    ov.addEventListener("click", function (e) {
+      if (e.target === ov || e.target.closest && e.target.closest("[data-ovclose]")) closeOverlay();
+    });
+    return ov;
+  }
+  function closeOverlay() {
+    var ov = document.getElementById("ov-layer");
+    if (ov) ov.parentNode.removeChild(ov);
+  }
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeOverlay(); });
+
   /* ---------------------------------------------------------- 图表：体重 */
 
   function weightChart() {
@@ -215,8 +261,10 @@
         var lab = typeof o === "string" ? o : o.label;
         return '<option value="' + esc(val) + '"' + (String(val) === String(v) ? " selected" : "") + ">" + esc(lab) + "</option>";
       }).join("") + "</select>";
-    } else if (f.type === "textarea") {
+    } else     if (f.type === "textarea") {
       inner = '<textarea name="' + f.name + '" rows="3" placeholder="' + esc(f.placeholder || "") + '">' + esc(v) + "</textarea>";
+    } else if (f.type === "file") {
+      inner = '<input name="' + f.name + '" type="file" accept="image/*"' + (f.placeholder ? ' data-label="' + esc(f.placeholder) + '"' : "") + ">";
     } else {
       inner = '<input name="' + f.name + '" type="' + (f.type || "text") + '" value="' + esc(v) +
         '" placeholder="' + esc(f.placeholder || "") + '"' + (f.step ? ' step="' + f.step + '"' : "") +
@@ -236,8 +284,19 @@
       '<button type="submit" class="btn primary">保存</button></div>';
     onFormSubmit = function () {
       var rec = {};
-      fields.forEach(function (f) { rec[f.name] = modalForm.elements[f.name].value.trim(); });
-      onSubmit(rec);
+      fields.forEach(function (f) {
+        rec[f.name] = f.type === "file" ? "" : modalForm.elements[f.name].value.trim();
+      });
+      var fileInput = modalForm.querySelector('input[type="file"]');
+      var file = fileInput && fileInput.files && fileInput.files[0];
+      if (file) {
+        compressImage(file, 1100, 0.72, function (dataUrl) {
+          rec.photo = dataUrl;
+          onSubmit(rec);
+        });
+      } else {
+        onSubmit(rec);
+      }
     };
     modal.hidden = false;
     modal.classList.add("show");
@@ -314,6 +373,7 @@
       { name: "date", label: "日期", type: "date", value: todayStr(), required: true },
       { name: "route", label: "路线", value: route || "", required: true, placeholder: "八卦田 — 玉皇山 — 万松书院" },
       { name: "minutes", label: "用时（分钟）", type: "number", min: 0, placeholder: "180" },
+      { name: "photo", label: "记录截图（可选）", type: "file", placeholder: "比如 Apple Watch 运动记录截图，会压缩后保存" },
       { name: "note", label: "感受", type: "textarea", placeholder: "路况、天气、体力情况" }
     ], function (rec) {
       S.add("hikes", rec);
@@ -332,9 +392,244 @@
     });
   }
 
-  /* --------------------------------------------------------- 渲染：总览 */
+  /* --------------------------------------------------------- 渲染：日历 */
 
-  var RENDER = {};
+  var calRef = new Date();
+  var calSel = todayStr();
+
+  var KIND_META = {
+    workouts: { label: "训练", tone: "b-primary", icon: "dumbbell" },
+    study: { label: "学习", tone: "b-accent", icon: "book" },
+    hikes: { label: "爬山", tone: "b-ok", icon: "mountain" },
+    meals: { label: "饮食", tone: "b-warn", icon: "sparkles" },
+    weight: { label: "体重", tone: "b-warn", icon: "target" },
+    events: { label: "活动", tone: "b-accent", icon: "bell" }
+  };
+
+  function dayItems(date) {
+    var out = [];
+    var push = function (kind, text) {
+      var m = KIND_META[kind];
+      out.push({ kind: kind, label: m.label, tone: m.tone, text: text });
+    };
+    S.all("workouts").forEach(function (r) { if (r.date === date) push("workouts", r.type + (r.minutes ? " · " + r.minutes + " 分" : "") + (r.moves ? " · " + r.moves : "")); });
+    S.all("study").forEach(function (r) { if (r.date === date) push("study", (r.tag || "学习") + " · " + r.minutes + " 分" + (r.topic ? " · " + r.topic : "")); });
+    S.all("hikes").forEach(function (r) { if (r.date === date) push("hikes", r.route + (r.minutes ? " · " + r.minutes + " 分" : "")); });
+    S.all("meals").forEach(function (r) { if (r.date === date) push("meals", r.type + " · " + r.total + " 大卡"); });
+    S.all("weight").forEach(function (r) { if (r.date === date) push("weight", r.jin + " 斤"); });
+    S.all("events").forEach(function (r) { if (r.date === date) push("events", r.title + (r.note ? " · " + r.note : "")); });
+    return out;
+  }
+
+  function dayKinds(date) {
+    var set = {};
+    dayItems(date).forEach(function (it) { set[it.kind] = 1; });
+    return Object.keys(set);
+  }
+
+  RENDER.calendar = function () {
+    var y = calRef.getFullYear(), m = calRef.getMonth();
+    var first = new Date(y, m, 1);
+    var startPad = first.getDay();               // 周日=0
+    var daysInMonth = new Date(y, m + 1, 0).getDate();
+    var today = todayStr();
+    var html = "";
+
+    html += panel("月视图", "点任意一天看当天记录",
+      '<div class="cal-nav">' +
+      '<button class="btn ghost sm" data-action="cal-prev">‹ 上月</button>' +
+      '<span class="cal-title">' + y + " 年 " + (m + 1) + " 月</span>" +
+      '<button class="btn ghost sm" data-action="cal-next">下月 ›</button>' +
+      "</div>",
+      '<div class="cal-grid">' +
+      ["日", "一", "二", "三", "四", "五", "六"].map(function (w) {
+        return '<div class="cal-wd">' + w + "</div>";
+      }).join("") +
+      Array(startPad).fill('<div class="cal-day blank"></div>').join("") +
+      (function () {
+        var s = "";
+        for (var d = 1; d <= daysInMonth; d++) {
+          var ds = y + "-" + String(m + 1).padStart(2, "0") + "-" + String(d).padStart(2, "0");
+          var kinds = dayKinds(ds);
+          var cls = "cal-day" + (ds === today ? " today" : "") + (ds === calSel ? " sel" : "");
+          s += '<button class="' + cls + '" data-cal="' + ds + '"><span class="cal-num">' + d + "</span>" +
+            '<span class="cal-dots">' + kinds.map(function (k) {
+              var tone = (KIND_META[k].tone || "b-primary").replace("b-", "dot-");
+              return '<i class="' + tone + '"></i>';
+            }).join("") + "</span></button>";
+        }
+        return s;
+      })() +
+      "</div>");
+
+    var items = dayItems(calSel);
+    var dayDetail =
+      '<div class="cal-detail-head"><h3>' + esc(calSel) + "</h3>" +
+      '<button class="btn primary sm" data-action="add-event">' + icon("plus") + "<span>添加活动</span></button></div>" +
+      (items.length
+        ? '<div class="check-list">' + items.map(function (it) {
+            return '<div class="note-item"><span class="badge ' + it.tone + '">' + esc(it.label) + "</span>" +
+              '<span class="note-txt">' + esc(it.text) + "</span>" +
+              (it.kind === "events"
+                ? (function () {
+                    var ev = S.all("events").filter(function (r) { return r.date === calSel && r.title + (r.note ? " · " + r.note : "") === it.text; })[0];
+                    return ev ? delBtn("events", ev.id) : "";
+                  })()
+                : "") +
+              "</div>";
+          }).join("") + "</div>"
+        : emptyBox("这天还没有记录。点右上角「添加活动」加一条，或从各栏目打卡。"));
+
+    html += panel("当天做了什么", "日历上点哪天，这里就显示哪天", "", dayDetail);
+
+    html += '<div class="cal-legend">' +
+      Object.keys(KIND_META).map(function (k) {
+        var tone = (KIND_META[k].tone || "b-primary").replace("b-", "dot-");
+        return '<span><i class="' + tone + '"></i>' + esc(KIND_META[k].label) + "</span>";
+      }).join("") + "</div>";
+
+    return html;
+  };
+
+  /* --------------------------------------------------------- 渲染：热量 */
+
+  var UNIT_GRAMS = { "鸡蛋": 50, "香蕉": 120, "牛奶": 250, "酸奶": 200, "可乐": 330, "啤酒": 330, "奶茶": 500, "豆浆": 250, "拿铁": 350, "玉米": 200, "苹果": 200, "汉堡": 1, "包子": 1, "馒头": 1 };
+
+  function parseFoods(text) {
+    var items = [], unmatched = [];
+    String(text || "").split(/[\n;；]+/).forEach(function (line) {
+      line = line.trim();
+      if (!line) return;
+      var m = line.match(/^(.+?)[\s:：]*(\d+(?:\.\d+)?)\s*(克|g|G|ml|毫升|个|碗|杯|份|根|块|瓶|罐)?$/);
+      if (!m) { unmatched.push(line); return; }
+      var name = m[1].trim().replace(/[，,、]$/, "");
+      var qty = parseFloat(m[2]);
+      var unit = (m[3] || "").toLowerCase();
+      var grams = qty;
+      if (["个", "根", "块", "碗", "杯", "份", "瓶", "罐"].indexOf(m[3] || "") >= 0) {
+        grams = (UNIT_GRAMS[name] || 100) * qty;
+      }
+      var hit = null;
+      for (var i = 0; i < C.foodDb.length; i++) {
+        if (name.indexOf(C.foodDb[i].n) >= 0 || C.foodDb[i].n.indexOf(name) >= 0) { hit = C.foodDb[i]; break; }
+      }
+      if (hit) items.push({ name: name, grams: Math.round(grams), kcal: Math.round(hit.k / 100 * grams) });
+      else unmatched.push(line);
+    });
+    return { items: items, unmatched: unmatched };
+  }
+
+  function dietTargets() {
+    var p = C.profile, s = S.settings();
+    var st = S.stats();
+    var kg = (st.weightLatest || p.weightJin) / 2;
+    var bmr = 10 * kg + 6.25 * p.height - 5 * (s.age || 30) + (s.sex === "female" ? -161 : 5);
+    var factor = { sedentary: 1.2, light: 1.375, moderate: 1.55 }[s.activity] || 1.375;
+    var tdee = Math.round(bmr * factor);
+    return { bmr: Math.round(bmr), tdee: tdee, target: Math.max(1200, tdee - 500) };
+  }
+
+  function kcalOn(date) {
+    return S.all("meals").filter(function (r) { return r.date === date; })
+      .reduce(function (a, r) { return a + (num(r.total) || 0); }, 0);
+  }
+
+  function formMeal() {
+    openForm("记一餐", [
+      { name: "date", label: "日期", type: "date", value: todayStr(), required: true },
+      { name: "type", label: "餐次", type: "select", options: ["早餐", "午餐", "晚餐", "加餐"] },
+      { name: "foods", label: "吃了什么", type: "textarea", placeholder: "每行一条：食物 克数（或个数）\n例：米饭 200\n鸡胸肉 150\n鸡蛋 1", hint: "食物名会自动匹配热量库；库里没有的行会被标出，热量算不进" },
+      { name: "photo", label: "拍照存档（可选）", type: "file", placeholder: "照片仅作记录，页面不识图，热量靠上面的文字算" }
+    ], function (rec) {
+      var parsed = parseFoods(rec.foods);
+      var total = parsed.items.reduce(function (a, b) { return a + b.kcal; }, 0);
+      S.add("meals", {
+        date: rec.date, type: rec.type,
+        items: parsed.items, unmatched: parsed.unmatched,
+        photo: rec.photo || "", total: total, note: rec.foods
+      });
+      toast("已记录，本餐约 " + total + " 大卡" + (parsed.unmatched.length ? "（有 " + parsed.unmatched.length + " 行没匹配到，未计入）" : ""));
+      render();
+    });
+  }
+
+  function photoThumb(rec, kind, id) {
+    if (!rec.photo) return "";
+    return '<img class="meal-thumb" src="' + esc(rec.photo) + '" alt="记录照片" data-photo="' + esc(kind) + ":" + esc(id) + '">';
+  }
+
+  function findPhoto(kind, id) {
+    var arr = S.all(kind);
+    for (var i = 0; i < arr.length; i++) if (arr[i].id === id) return arr[i].photo || "";
+    return "";
+  }
+
+  /* ------------------------------------------------------------- 地图 */
+
+  function loadTMap(key, cb) {
+    if (window.TMap) return cb();
+    var sc = document.createElement("script");
+    sc.src = "https://map.qq.com/api/gljs?v=1.exp&key=" + encodeURIComponent(key);
+    sc.onload = function () { cb(); };
+    sc.onerror = function () { toast("腾讯地图 SDK 加载失败，检查 key 和网络"); };
+    document.head.appendChild(sc);
+  }
+
+  function showRouteMap(route) {
+    var key = S.settings().mapKey;
+    var pathHint = '<div class="map-hint">路线为示意路径（关键节点连线），精确导航请用地图 App。</div>';
+    if (!key) {
+      openOverlay("<h3>" + esc(route.name) + " · 路线图</h3>" +
+        '<div class="note warn">还没填腾讯地图 Key，真实地图显示不了。</div>' +
+        '<div class="sub-title">怎么拿 Key（免费，两分钟）</div>' +
+        dotList([
+          "打开 lbs.qq.com，用 QQ/微信登录，进「控制台」",
+          "创建应用 → 添加 Key，类型选「WebServiceAPI」或「WebGL」",
+          "在 Key 设置里把域名白名单加上：xiuyuansun0212.github.io 和 life-assistant-27600.app.workbuddy.host",
+          "把 Key 填到「数据」页 → 个人设置里保存"
+        ]) + pathHint, "map-guide");
+      return;
+    }
+    var ov = openOverlay("<h3>" + esc(route.name) + " · 路线图</h3>" +
+      '<div id="routeMap" class="route-map"></div>' + pathHint, "map-modal");
+    loadTMap(key, function () {
+      var box = document.getElementById("routeMap");
+      if (!box || !window.TMap) return;
+      try {
+        var path = route.path.map(function (p) { return new TMap.LatLng(p[0], p[1]); });
+        var map = new TMap.Map(box, {
+          zoom: 13,
+          center: path[Math.floor(path.length / 2)],
+          viewMode: "2D"
+        });
+        new TMap.MultiPolyline({
+          map: map,
+          styles: {
+            route: new TMap.PolylineStyle({
+              color: "#37c08a", width: 5,
+              lineCap: "round", lineJoin: "round"
+            })
+          },
+          geometries: [{ id: "r", styleId: "route", paths: path }]
+        });
+        var mid = path[Math.floor(path.length / 2)];
+        new TMap.MultiLabel({
+          map: map,
+          styles: {
+            pl: new TMap.LabelStyle({ color: "#ffffff", bgColor: "rgba(20,40,32,0.85)", borderRadius: 6, fontSize: 12, padding: { top: 4, right: 8, bottom: 4, left: 8 } })
+          },
+          geometries: route.ptNames.map(function (n, i) {
+            return { id: "p" + i, styleId: "pl", position: path[i], content: n };
+          }).concat([
+            { id: "pe", styleId: "pl", position: mid, content: "" }
+          ])
+        });
+      } catch (err) {
+        toast("地图初始化失败：" + err.message);
+      }
+    });
+  }
+
 
   RENDER.overview = function () {
     var st = S.stats();
@@ -467,6 +762,41 @@
       headBtn("记录体重", "add-weight"),
       weightChart());
 
+    /* ---- 热量预算与饮食 ---- */
+    var dt = dietTargets();
+    var eaten = kcalOn(todayStr());
+    var remain = dt.target - eaten;
+    var eatenPct = Math.max(0, Math.min(100, eaten / dt.target * 100));
+    var mealRows = S.all("meals").map(function (r) {
+      return [
+        { text: r.date, cls: "num nowrap" },
+        { text: r.type, cls: "nowrap" },
+        { html: (r.items || []).map(function (it) { return esc(it.name + " " + it.grams + "g"); }).join("、") +
+          (r.unmatched && r.unmatched.length ? '<span class="dim"> · 没匹配到：' + esc(r.unmatched.join("、")) + "</span>" : "") +
+          photoThumb(r, "meals", r.id), cls: "" },
+        { text: r.total + " 大卡", cls: "num nowrap strong" },
+        { html: delBtn("meals", r.id), cls: "nowrap right" }
+      ];
+    });
+
+    html += '<div class="grid g2">' +
+      panel("每日热量预算", "按你的身高体重和活动水平算",
+        '<button class="btn ghost sm" data-action="open-settings">改个人参数</button>',
+        '<div class="met-row">' +
+        metBox("基础代谢", dt.bmr, "大卡") +
+        metBox("日常消耗 TDEE", dt.tdee, "大卡") +
+        metBox("减脂目标摄入", dt.target, "大卡") +
+        "</div>" +
+        '<div class="row-item" style="margin-top:12px"><div class="ri-head"><span class="ri-name">今天已摄入</span>' +
+        '<span class="ri-num">' + eaten + " / " + dt.target + " 大卡</span></div>" +
+        '<div class="bar ' + (eaten > dt.target ? "warn" : "") + '"><i style="width:' + eatenPct + '%"></i></div>' +
+        '<div class="ri-note">' + (remain >= 0 ? "还能吃约 " + remain + " 大卡，缺口达标（TDEE − 500）" : "今天已超 " + (-remain) + " 大卡，明天补回来就行") + "</div></div>" +
+        '<div class="note" style="margin-top:12px">缺口逻辑：每天比消耗少 500 大卡 ≈ 每周减 0.5kg 纯脂肪。热量按食物库估算，不用精确到个位数，趋势对就行。别低于 1200。</div>') +
+      panel("饮食记录", "记一餐，自动算热量",
+        headBtn("记一餐", "add-meal"),
+        table(["日期", "餐次", "吃了什么", "热量", ""], mealRows)) +
+      "</div>";
+
     html += '<div class="grid g2">' +
       panel("每周安排", "力量 3 次 + 跑步 2 次 + 休息 2 天",
         table(["日", "内容", "具体做什么", "强度"], f.weekly.map(function (r) {
@@ -484,17 +814,27 @@
         panel("饮食一句话", "", "", '<p class="plain">' + esc(f.intake) + "</p>")) +
       "</div>";
 
-    html += sectionTitle("动作库", "自绘动画示意 · 动作要点都写在下面");
+    html += sectionTitle("动作库", "真实现场动图 · 点开有分步教程");
     html += '<div class="grid g-auto moves">' + f.moves.map(function (m, i) {
+      var fig = m.gif
+        ? '<img class="move-gif" loading="lazy" src="' + esc(m.gif) + '" alt="' + esc(m.name) + '">'
+        : '<div class="move-fig">' + (m.anim || '<div class="move-noanim">' + icon("dumbbell") + "</div>") + "</div>";
       return '<article class="move card tight">' +
-        '<div class="move-fig">' + (m.gif ? '<img src="' + esc(m.gif) + '" alt="' + esc(m.name) + '">' : (m.anim || '<div class="move-noanim">' + icon("dumbbell") + "</div>")) + "</div>" +
+        '<div class="move-fig move-fig--gif">' + fig + "</div>" +
         '<div class="move-head"><h3>' + esc(m.name) + "</h3>" +
         '<span class="badge b-primary">' + esc(m.part) + "</span></div>" +
         '<div class="move-dose">' + esc(m.dose) + "</div>" +
-        "<ul class=\"move-cues\">" + m.cues.map(function (c) { return "<li>" + esc(c) + "</li>"; }).join("") + "</ul>" +
+        '<ul class="move-cues">' + m.cues.map(function (c) { return "<li>" + esc(c) + "</li>"; }).join("") + "</ul>" +
+        (m.steps && m.steps.length
+          ? '<details class="move-steps"><summary>分步教程</summary><ol>' +
+            m.steps.map(function (s) { return "<li>" + esc(s) + "</li>"; }).join("") + "</ol>" +
+            (m.src ? '<a class="ext-link" target="_blank" rel="noopener" href="' + esc(m.src) + '">来源页 ↗</a>' : "") +
+            "</details>"
+          : "") +
         (m.wrong ? '<div class="move-wrong">' + esc(m.wrong) + "</div>" : "") +
         "</article>";
     }).join("") + "</div>";
+    html += '<p class="dim attrib">' + esc(C.attrib.moves) + "</p>";
 
     return html;
   };
@@ -558,6 +898,23 @@
         "<p>" + esc(c.body) + "</p></article>";
     }).join("") + "</div>";
 
+    html += sectionTitle("系统学习", "中长文，一周读一篇刚刚好");
+    html += s.articles.map(function (a, i) {
+      return '<details class="article card tight">' +
+        '<summary><span class="badge b-accent">' + esc(a.tag) + "</span>" +
+        '<span class="art-title">' + esc(a.title) + "</span>" +
+        '<span class="dim num">' + esc(a.minutes) + "</span></summary>" +
+        '<p class="plain art-summary">' + esc(a.summary) + "</p>" +
+        a.body.map(function (sec) {
+          return "<h4>" + esc(sec.h) + "</h4>" +
+            '<ul class="dot-list">' + sec.ps.map(function (p) { return "<li>" + esc(p) + "</li>"; }).join("") + "</ul>";
+        }).join("") +
+        '<div class="sub-title">相关链接</div>' +
+        '<div class="link-row">' + a.links.map(function (l) {
+          return '<a class="ext-link" target="_blank" rel="noopener" href="' + esc(l.u) + '">' + esc(l.t) + " ↗</a>";
+        }).join("") + "</div></details>";
+    }).join("");
+
     return html;
   };
 
@@ -578,13 +935,16 @@
 
     html += panel("路线与打卡", h.note, headBtn("自定义路线", "add-route"), "");
 
-    html += '<div class="grid g-auto routes">' + h.routes.map(function (r) {
+    html += '<div class="grid g-auto routes">' + h.routes.map(function (r, i) {
       var rec = done.filter(function (d) { return d.route === r.name; })[0];
       return '<article class="route' + (rec ? " is-done" : "") + '">' +
         '<div class="route-top"><div><h3>' + esc(r.name) + '</h3>' +
         '<div class="route-region">' + esc(r.region) + "</div></div>" +
         '<span class="badge ' + (r.tone ? "b-" + r.tone : "") + '">' + esc(r.level) + "</span></div>" +
         profileChart(r.profile) +
+        (r.path
+          ? '<button class="btn ghost sm map-btn" data-action="show-map" data-idx="' + i + '">在地图上看这条线</button>'
+          : "") +
         '<div class="route-nodes">' + r.nodes.map(function (n) { return '<span class="node">' + esc(n) + "</span>"; }).join('<span class="node-sep">→</span>') + "</div>" +
         '<div class="route-meta">' +
         '<div><span class="k">距离</span>' + esc(r.dist) + "</div>" +
@@ -596,6 +956,7 @@
         '<div class="route-foot">' +
         (rec
           ? '<span class="stamp">' + icon("check") + "已打卡 " + esc(rec.date) + "</span>" +
+            photoThumb(rec, "hikes", rec.id) +
             '<button class="icon-btn" data-del="hikes" data-id="' + esc(rec.id) + '" title="取消打卡">' + icon("trash") + "</button>"
           : '<button class="btn primary sm" data-action="add-hike" data-route="' + esc(r.name) + '">' + icon("check") + "<span>打卡</span></button>") +
         "</div></article>";
@@ -660,13 +1021,30 @@
 
   function travelCard(d, badgeText) {
     return panel(d.name, badgeText,
-      '<div class="route-region" style="margin-top:-8px">' + esc(d.region) + "</div>" +
+      cityBanner(d) +
+      '<div class="route-region">' + esc(d.region) + "</div>" +
       '<p class="plain" style="margin-top:10px">' + esc(d.note) + "</p>" +
       '<div class="phase-list">' + d.plan.map(function (p, i) {
         return '<div class="phase"><div class="phase-idx">' + (i + 1) + '</div><div class="phase-body"><h4>' + esc(p) + "</h4></div></div>";
       }).join("") + "</div>" +
       '<div class="sub-title">准备清单</div>' +
       checklist(d.checklist, "trip-" + d.name));
+  }
+
+  function cityBanner(d) {
+    var sky = {
+      hengdian: {
+        g: "linear-gradient(180deg,#3b2a20 0%,#7a4a2b 55%,#c98a4b 100%)",
+        s: '<path d="M0 70 0 46 10 46 10 34 22 34 22 46 34 46 34 22 46 10 58 22 58 46 74 46 74 30 88 30 88 46 100 46 100 38 112 38 112 46 120 46 120 70Z"/>'
+      },
+      japan: {
+        g: "linear-gradient(180deg,#28324e 0%,#5d6f9e 55%,#e8b7a0 100%)",
+        s: '<path d="M0 70 0 52 8 52 22 34 36 52 44 52 44 40 60 26 76 40 76 52 88 52 102 38 112 46 120 46 120 70Z"/><circle cx="96" cy="16" r="7" fill="rgba(255,255,255,0.75)" stroke="none"/>'
+      }
+    }[d.theme] || { g: "linear-gradient(180deg,#2c3e50,#4b6cb7)", s: '<path d="M0 70 0 50 15 50 15 30 30 44 45 20 60 40 75 24 90 46 105 34 120 50 120 70Z"/>' };
+    return '<div class="city-banner" style="background:' + sky.g + '">' +
+      '<svg viewBox="0 0 120 70" preserveAspectRatio="xMidYMax slice" aria-hidden="true"><path fill="rgba(0,0,0,0.35)" d="' + sky.s + '"/></svg>' +
+      '<span class="city-name">' + esc(d.name) + "</span></div>";
   }
 
   /* --------------------------------------------------------- 渲染：娱乐 */
@@ -708,6 +1086,17 @@
     ];
     var html = "";
 
+    html += panel("个人设置", "热量计算、地图都用得到",
+      '<button class="btn primary sm" data-action="open-settings">打开设置</button>',
+      (function () {
+        var s = S.settings();
+        return '<div class="kv">' +
+          kvRow("年龄 / 性别", s.age + " · " + (s.sex === "female" ? "女" : "男")) +
+          kvRow("活动水平", { sedentary: "久坐", light: "轻度（每周动 1–3 次）", moderate: "中度（每周动 3–5 次）" }[s.activity] || s.activity) +
+          kvRow("腾讯地图 Key", s.mapKey ? '<span class="ok-text">已设置</span>' : '<span class="dim">未设置，地图页会提示怎么申请</span>') +
+          "</div>";
+      })());
+
     html += panel("数据都在浏览器本地", "换设备或清缓存会丢，所以记得导出备份",
       '<div class="met-row">' + counts.map(function (c) { return metBox(c[0], c[1], "条"); }).join("") + "</div>" +
       '<div class="note" style="margin-top:14px">这份工作台是纯静态网页，没有服务器。你录入的数据保存在当前浏览器里，' +
@@ -736,12 +1125,13 @@
 
   var SECTIONS = [
     { id: "overview", label: "总览", icon: "home", group: "工作台", sub: "今天该做什么，记录到哪里了" },
-    { id: "fitness", label: "健身", icon: "dumbbell", group: "生活板块", sub: "减脂 · 5kg 哑铃循环 + 跑步" },
-    { id: "study", label: "学习", icon: "book", group: "生活板块", sub: "DPDK / OVS · 每天 20–30 分钟" },
+    { id: "calendar", label: "日历", icon: "bell", group: "工作台", sub: "哪天干了什么，一眼看清" },
+    { id: "fitness", label: "健身", icon: "dumbbell", group: "生活板块", sub: "减脂 · 5kg 哑铃循环 + 跑步 + 热量" },
+    { id: "study", label: "学习", icon: "book", group: "生活板块", sub: "DPDK / OVS · 卡片 + 系统长文" },
     { id: "hikes", label: "爬山", icon: "mountain", group: "生活板块", sub: "杭州路线打底，向周边长线扩展" },
     { id: "travel", label: "旅游", icon: "plane", group: "生活板块", sub: "短期横店，长期日本" },
     { id: "fun", label: "娱乐", icon: "sparkles", group: "生活板块", sub: "《莲花楼》·《鬼武者》" },
-    { id: "data", label: "数据", icon: "db", group: "我的记录", sub: "导出 / 导入 / 清空" }
+    { id: "data", label: "数据", icon: "db", group: "我的记录", sub: "设置 · 导出 / 导入 / 清空" }
   ];
 
   function buildNav() {
@@ -820,6 +1210,17 @@
     var tagBtn = e.target.closest ? e.target.closest("[data-tag]") : null;
     if (tagBtn) { studyFilter = tagBtn.dataset.tag; render(); return; }
 
+    var calDay = e.target.closest ? e.target.closest("[data-cal]") : null;
+    if (calDay) { calSel = calDay.dataset.cal; render(); return; }
+
+    var photo = e.target.closest ? e.target.closest("[data-photo]") : null;
+    if (photo) {
+      var pr = photo.dataset.photo.split(":");
+      var src = findPhoto(pr[0], pr[1]);
+      if (src) openOverlay('<img class="lightbox-img" src="' + esc(src) + '">');
+      return;
+    }
+
     var act = e.target.closest ? e.target.closest("[data-action]") : null;
     if (!act) return;
     var a = act.dataset.action;
@@ -829,7 +1230,34 @@
     else if (a === "add-weight") formWeight();
     else if (a === "add-study") formStudy();
     else if (a === "add-hike") formHike(route);
-    else if (a === "add-route") {
+    else if (a === "add-meal") formMeal();
+    else if (a === "cal-prev") { calRef = new Date(calRef.getFullYear(), calRef.getMonth() - 1, 1); render(); }
+    else if (a === "cal-next") { calRef = new Date(calRef.getFullYear(), calRef.getMonth() + 1, 1); render(); }
+    else if (a === "add-event") {
+      openForm("添加活动", [
+        { name: "date", label: "日期", type: "date", value: calSel, required: true },
+        { name: "title", label: "活动名称", required: true, placeholder: "比如：加练 20 分钟核心 / 牙医 / 朋友聚餐" },
+        { name: "note", label: "备注", placeholder: "时间、地点、注意事项" }
+      ], function (rec) { S.add("events", rec); toast("已添加到日历"); render(); });
+    } else if (a === "show-map") {
+      var idx = parseInt(act.dataset.idx, 10);
+      if (!isNaN(idx) && C.hikes.routes[idx]) showRouteMap(C.hikes.routes[idx]);
+    } else if (a === "open-settings") {
+      var st0 = S.settings();
+      openForm("个人设置", [
+        { name: "age", label: "年龄", type: "number", min: 10, max: 90, value: st0.age, required: true, hint: "用于算基础代谢" },
+        { name: "sex", label: "性别", type: "select", options: [{ value: "male", label: "男" }, { value: "female", label: "女" }], value: st0.sex },
+        { name: "activity", label: "日常活动水平", type: "select", options: [{ value: "sedentary", label: "久坐" }, { value: "light", label: "轻度（每周动 1–3 次）" }, { value: "moderate", label: "中度（每周动 3–5 次）" }], value: st0.activity },
+        { name: "mapKey", label: "腾讯地图 Key（可选）", value: st0.mapKey, placeholder: "lbs.qq.com 申请，填了才能看路线地图", hint: "申请方法在爬山页点「在地图上看这条线」能看到" }
+      ], function (rec) {
+        S.setSetting("age", num(rec.age) || 30);
+        S.setSetting("sex", rec.sex);
+        S.setSetting("activity", rec.activity);
+        S.setSetting("mapKey", rec.mapKey.trim());
+        toast("设置已保存");
+        render();
+      });
+    } else if (a === "add-route") {
       openForm("自定义路线", [
         { name: "route", label: "路线名称", required: true, placeholder: "比如：湘湖 — 越王城山" },
         { name: "region", label: "区域", placeholder: "杭州 · 萧山" },

@@ -8,19 +8,26 @@
 window.Store = (function () {
   "use strict";
 
-  var KEY = "lifeassistant:data:v2";
-  var KINDS = ["weight", "workouts", "study", "hikes", "notes", "routes", "wishlist"];
+  var KEY = "lifeassistant:data:v3";
+  var OLD_KEY = "lifeassistant:data:v2";
+  var KINDS = ["weight", "workouts", "study", "hikes", "meals", "events", "notes", "routes", "wishlist"];
 
   function blank() {
-    return { version: 2, weight: [], workouts: [], study: [], hikes: [], notes: [], routes: [], wishlist: [] };
+    return {
+      version: 3,
+      weight: [], workouts: [], study: [], hikes: [],
+      meals: [], events: [],
+      notes: [], routes: [], wishlist: [],
+      settings: { age: 30, sex: "male", activity: "light", mapKey: "" }
+    };
   }
 
-  /* 初始只有一条：你前几天爬过的那条玉皇山路线 */
+  /* 初始只有一条：玉皇山路线，日期固定为 2026-10-11（实际爬山那天） */
   function seed() {
     var d = blank();
     d.hikes.push({
       id: uid(),
-      date: daysAgo(4),
+      date: "2026-10-11",
       route: "八卦田 — 玉皇山 — 万松书院",
       minutes: 180,
       note: "已完成，作为体能基准线"
@@ -56,15 +63,52 @@ window.Store = (function () {
         KINDS.forEach(function (k) {
           if (Array.isArray(parsed[k])) data[k] = parsed[k];
         });
+        if (parsed.settings) {
+          Object.keys(data.settings).forEach(function (k) {
+            if (parsed.settings[k] != null) data.settings[k] = parsed.settings[k];
+          });
+        }
+        migrate(data);
+        save();
       } catch (e) {
         data = seed();
         save();
       }
     } else {
+      /* 兼容 v2：旧键存在就直接升版，避免用户丢数据 */
+      var oldRaw = null;
+      try { oldRaw = localStorage.getItem(OLD_KEY); } catch (e2) { oldRaw = null; }
+      if (oldRaw) {
+        try {
+          var oldParsed = JSON.parse(oldRaw);
+          data = blank();
+          KINDS.forEach(function (k) {
+            if (Array.isArray(oldParsed[k])) data[k] = oldParsed[k];
+          });
+          if (oldParsed.settings) {
+            Object.keys(data.settings).forEach(function (k) {
+              if (oldParsed.settings[k] != null) data.settings[k] = oldParsed.settings[k];
+            });
+          }
+          migrate(data);
+          save();
+          return data;
+        } catch (e3) { /* 掉到 seed */ }
+      }
       data = seed();
       save();
     }
     return data;
+  }
+
+  /* 版本迁移：把玉皇山预置打卡的日期修正为实际爬山日 2026-10-11 */
+  function migrate(d) {
+    (d.hikes || []).forEach(function (h) {
+      if (h.route && h.route.indexOf("玉皇山") >= 0 && h.date !== "2026-10-11" &&
+          h.note && h.note.indexOf("基准线") >= 0) {
+        h.date = "2026-10-11";
+      }
+    });
   }
 
   function save() {
@@ -78,6 +122,17 @@ window.Store = (function () {
       if (a.date === b.date) return (b.id > a.id ? 1 : -1);
       return a.date < b.date ? 1 : -1;   // 新的在前
     });
+  }
+
+  function settings() {
+    load();
+    return data.settings;
+  }
+
+  function setSetting(k, v) {
+    load();
+    data.settings[k] = v;
+    save();
   }
 
   function add(kind, rec) {
@@ -149,9 +204,9 @@ window.Store = (function () {
     var latest = wt.length ? num(wt[0].jin) : 0;
     var first = wt.length ? num(wt[wt.length - 1].jin) : 0;
 
-    /* 连续打卡天数：训练 / 学习 / 爬山 / 体重，任一种有记录就算 */
+    /* 连续打卡天数：训练 / 学习 / 爬山 / 体重 / 饮食，任一种有记录就算 */
     var dayset = {};
-    ["workouts", "study", "hikes", "weight"].forEach(function (k) {
+    ["workouts", "study", "hikes", "weight", "meals"].forEach(function (k) {
       all(k).forEach(function (r) { dayset[r.date] = 1; });
     });
     var streak = 0;
@@ -188,6 +243,8 @@ window.Store = (function () {
     all: all,
     add: add,
     remove: remove,
+    settings: settings,
+    setSetting: setSetting,
     clearAll: clearAll,
     exportText: exportText,
     importText: importText,
