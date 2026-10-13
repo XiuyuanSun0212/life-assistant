@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>个人生活助理 · 孙sir</title>
+<meta name="description" content="孙sir 的个人生活助理：健身打卡、DPDK 学习、杭州爬山路线、旅游与娱乐记录。" />
+<link rel="stylesheet" href="assets/css/style.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-mark">汪</div>
+        <div class="brand-text">
+          <div class="brand-name">个人生活助理</div>
+          <div class="brand-sub">by 小王</div>
+        </div>
+      </div>
+
+      <nav class="nav" id="nav" aria-label="主导航"></nav>
+
+      <div class="sidebar-foot">
+        <div class="side-note" id="sideNote"></div>
+        <button class="theme-toggle" id="themeToggle" type="button" aria-label="切换主题">
+          <span class="tt-icon" id="ttIcon">☾</span>
+          <span id="ttLabel">切换深色</span>
+        </button>
+      </div>
+    </aside>
+
+    <div class="scrim" id="scrim"></div>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="menu-btn" id="menuBtn" type="button" aria-label="展开菜单">☰</button>
+        <div class="topbar-head">
+          <h1 id="pageTitle">总览</h1>
+          <p class="topbar-sub" id="pageSub"></p>
+        </div>
+        <div class="topbar-right">
+          <div class="clock" id="clock"></div>
+          <div class="avatar" title="孙sir">孙</div>
+        </div>
+      </header>
+
+      <div class="content" id="content"></div>
+
+      <footer class="foot">
+        <span>个人生活助理 · 纯静态项目</span>
+        <span class="dot">·</span>
+        <span>内容在 <code>assets/js/content.js</code>，记录存在浏览器本地</span>
+      </footer>
+    </main>
+  </div>
+
+  <div class="modal" id="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="modalTitle">标题</h3>
+        <button class="icon-btn" type="button" data-cancel aria-label="关闭">✕</button>
+      </div>
+      <form id="modalForm" class="modal-body"></form>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="assets/js/content.js"></script>
+  <script src="assets/js/store.js"></script>
+  <script src="assets/js/app.js"></script>
+</body>
+</html>
